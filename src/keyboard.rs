@@ -245,8 +245,12 @@ impl Keyboard {
             for c in input.chars() {
                 if let Some(&(key, shift)) = self.key_map.get(&c) {
                     if shift {
-                        // Press Shift
+                        // Shift must be a separate report: xochitl ignores a
+                        // modifier that shares a SYN_REPORT with the key it
+                        // should modify.
                         device.emit(&[InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTSHIFT.code(), 1)])?;
+                        device.emit(&[InputEvent::new(EvdevEventType::SYNCHRONIZATION.0, 0, 0)])?;
+                        thread::sleep(time::Duration::from_millis(15));
                     }
 
                     // Press key
@@ -255,14 +259,16 @@ impl Keyboard {
                     // Release key
                     device.emit(&[InputEvent::new(EvdevEventType::KEY.0, key.code(), 0)])?;
 
-                    if shift {
-                        // Release Shift
-                        device.emit(&[InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTSHIFT.code(), 0)])?;
-                    }
-
-                    // Sync event
+                    // Sync event for the key itself
                     device.emit(&[InputEvent::new(EvdevEventType::SYNCHRONIZATION.0, 0, 0)])?;
                     thread::sleep(time::Duration::from_millis(10));
+
+                    if shift {
+                        // Release Shift, again as its own report
+                        device.emit(&[InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTSHIFT.code(), 0)])?;
+                        device.emit(&[InputEvent::new(EvdevEventType::SYNCHRONIZATION.0, 0, 0)])?;
+                        thread::sleep(time::Duration::from_millis(15));
+                    }
                 }
             }
         }

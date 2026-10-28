@@ -90,6 +90,34 @@ pub fn find_active_page(dir: &Path) -> Result<PathBuf> {
 
 /// Fallback: most recently modified .rm anywhere in the store.
 fn find_newest_page(dir: &Path) -> Result<PathBuf> {
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+
+    for entry in std::fs::read_dir(dir).with_context(|| format!("read_dir {}", dir.display()))? {
+        let entry = entry?;
+        let notebook_dir = entry.path();
+        if !notebook_dir.is_dir() {
+            continue;
+        }
+        let Ok(inner) = std::fs::read_dir(&notebook_dir) else {
+            continue;
+        };
+        for file in inner.flatten() {
+            let path = file.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rm") {
+                continue;
+            }
+            let Ok(meta) = file.metadata() else { continue };
+            let Ok(modified) = meta.modified() else { continue };
+            if best.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
+                best = Some((modified, path));
+            }
+        }
+    }
+
+    best.map(|(_, p)| p)
+        .context("no .rm page found in document store")
+}
+
 /// Parse a page file and return its typed text plus block geometry.
 pub fn read_page_text(path: &Path) -> Result<PageText> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;

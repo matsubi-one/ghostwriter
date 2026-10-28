@@ -49,3 +49,6 @@ path = "src/bin/experiment.rs"
 # strip = true  # Automatically strip symbols from the binary.
 # opt-level = "z"  # Optimize for size.
 # lto = true
+
+[patch.crates-io]
+remarkable_lines = { path = "vendor/remarkable_lines" }

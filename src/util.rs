@@ -139,7 +139,13 @@ pub fn option_or_env(options: &OptionMap, key: &str, env_key: &str) -> String {
     if let Some(value) = option {
         value.to_string()
     } else {
-        std::env::var(env_key).unwrap().to_string()
+        match std::env::var(env_key) {
+            Ok(v) => v,
+            Err(_) => {
+                log::warn!("Environment variable {} is not set", env_key);
+                String::new()
+            }
+        }
     }
 }
 

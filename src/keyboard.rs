@@ -302,6 +302,14 @@ impl Keyboard {
         Ok(())
     }
 
+    pub fn ctrl_end(&mut self) -> Result<()> {
+        self.key_down(EvdevKey::KEY_LEFTCTRL)?;
+        self.key_down(EvdevKey::KEY_END)?;
+        self.key_up(EvdevKey::KEY_END)?;
+        self.key_up(EvdevKey::KEY_LEFTCTRL)?;
+        Ok(())
+    }
+
     pub fn progress(&mut self, note: &str) -> Result<()> {
         if self.no_draw_progress {
             return Ok(());

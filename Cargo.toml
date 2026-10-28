@@ -28,6 +28,7 @@ log = "0.4.22"
 figment = { version = "0.10", features = ["toml", "env"] }
 toml = "0.8"
 warp = "0.3"
+remarkable_lines = "0.1.3"
 
 [dev-dependencies]
 clippy = "0.0.302"

@@ -60,6 +60,14 @@ pub struct Args {
     #[arg(long, default_value = "general.json")]
     prompt: String,
 
+    /// Read typed text from the notebook instead of taking a screenshot
+    #[arg(long)]
+    text_mode: bool,
+
+    /// Override the xochitl document store path
+    #[arg(long)]
+    notebook_dir: Option<String>,
+
     /// Do not actually submit to the model, for testing
     #[arg(short, long)]
     no_submit: bool,
@@ -373,7 +381,7 @@ async fn run_ghostwriter_loop(
     let trigger_corner = TriggerCorner::from_string(&config.trigger_corner)?;
     let keyboard = shared!(Keyboard::new(
         config.is_test_mode() || config.no_draw || config.no_keyboard,
-        config.no_draw_progress,
+        config.no_draw_progress || config.text_mode,
     ));
 
     let pen = shared!(Pen::new(config.is_test_mode() || config.no_draw));
@@ -471,6 +479,7 @@ async fn run_ghostwriter_loop(
                     let progress_tx_clone = progress_tx.clone();
                     let cancellation_clone = Arc::clone(&cancellation);
                     let touch_clone = Arc::clone(&touch);
+                    let keyboard_clone = Arc::clone(&keyboard);
                     tokio::spawn(async move {
                         coordinator::processing_task(
                             config_clone,
@@ -478,6 +487,7 @@ async fn run_ghostwriter_loop(
                             progress_tx_clone,
                             cancellation_clone,
                             touch_clone,
+                            keyboard_clone,
                         ).await
                     })
                 };
@@ -571,6 +581,7 @@ fn register_tools(
     // Register draw_text tool
     let output_file = config.output_file.clone();
     let no_draw = config.no_draw;
+    let text_mode = config.text_mode;
     let keyboard_clone = Arc::clone(&keyboard);
 
     let tool_config_draw_text = load_config("tool_draw_text.json");
@@ -591,7 +602,15 @@ fn register_tools(
                 }
             }
             if !no_draw {
-                if let Err(e) = draw_text(text, &mut lock!(keyboard_clone)) {
+                let mut kb = lock!(keyboard_clone);
+                let result = if text_mode {
+                    // Append on a fresh line in the existing text block.
+                    kb.string_to_keypresses("
+").and_then(|_| kb.string_to_keypresses(text))
+                } else {
+                    draw_text(text, &mut kb)
+                };
+                if let Err(e) = result {
                     log::error!("Failed to draw text: {}", e);
                 }
             }

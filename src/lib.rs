@@ -4,6 +4,7 @@ pub mod coordinator;
 pub mod device;
 pub mod embedded_assets;
 pub mod keyboard;
+pub mod notebook;
 pub mod llm_engine;
 pub mod pen;
 pub mod screenshot;

@@ -282,8 +282,14 @@ pub async fn processing_task(
     progress_tx: watch::Sender<ProgressState>,
     cancellation: Arc<GhostwriterCancellation>,
     touch: Arc<tokio::sync::RwLock<Touch>>,
+    keyboard: Arc<Mutex<Keyboard>>,
 ) -> Result<()> {
     info!("Processing task: starting");
+
+    if config.text_mode {
+        info!("Processing task: text mode (no screenshot)");
+        return process_text_mode(config, engine, progress_tx, cancellation, touch, keyboard).await;
+    }
 
     // Update progress: taking screenshot
     info!("Setting ProgressState::TakingScreenshot");
@@ -405,6 +411,82 @@ pub async fn processing_task(
             }
 
             // Return to idle state
+            let _ = progress_tx.send(ProgressState::Idle);
+            Err(e)
+        }
+    }
+}
+
+
+/// Text-mode pipeline: read the typed text layer of the active page, ask the
+/// model, and print the answer back into the same text block.
+async fn process_text_mode(
+    config: Config,
+    engine: Arc<TokioMutex<Box<dyn LLMEngine>>>,
+    progress_tx: watch::Sender<ProgressState>,
+    cancellation: Arc<GhostwriterCancellation>,
+    touch: Arc<tokio::sync::RwLock<Touch>>,
+    keyboard: Arc<Mutex<Keyboard>>,
+) -> Result<()> {
+    let dir = config
+        .notebook_dir
+        .clone()
+        .unwrap_or_else(|| crate::notebook::DEFAULT_XOCHITL_DIR.to_string());
+
+    let page_path = crate::notebook::find_active_page(std::path::Path::new(&dir))?;
+    let page = crate::notebook::read_page_text(&page_path)?;
+    info!(
+        "text mode: {} chars, block origin ({}, {}) width {}",
+        page.text.chars().count(),
+        page.x,
+        page.y,
+        page.width
+    );
+
+    // Put the caret inside the text block before the model answers.
+    let (vx, vy) = crate::notebook::page_to_virtual(page.x, page.y, 1404.0, 1872.0);
+    {
+        let mut t = touch.write().await;
+        let _ = t.touch_start((vx + 4, vy + 4)).await;
+        sleep(Duration::from_millis(120)).await;
+        let _ = t.touch_stop().await;
+    }
+    {
+        if let Ok(mut kb) = keyboard.lock() {
+            let _ = kb.ctrl_end();
+        }
+    }
+
+    let prompt_raw = load_config(&config.prompt);
+    let prompt_json = serde_json::from_str::<serde_json::Value>(prompt_raw.as_str())?;
+    let mut prompt = prompt_json["prompt"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("prompt file missing required 'prompt' field"))?
+        .to_string();
+    prompt.push_str("
+
+Isi halaman:
+");
+    prompt.push_str(page.text.trim_end());
+
+    let _ = progress_tx.send(ProgressState::LlmState(ModelExecutionStatus::BuildingContext));
+
+    let mut engine_guard = engine.lock().await;
+    engine_guard.clear_content();
+    engine_guard.add_text_content(&prompt);
+
+    let progress_tx_clone = progress_tx.clone();
+    let status_callback = Some(Box::new(move |status: ModelExecutionStatus| {
+        let _ = progress_tx_clone.send(ProgressState::LlmState(status));
+    }) as Box<dyn FnMut(ModelExecutionStatus) + Send>);
+
+    let result = engine_guard.execute(&cancellation, status_callback).await;
+    match result {
+        Ok(_) => {
+            let _ = progress_tx.send(ProgressState::Done);
+            Ok(())
+        }
+        Err(e) => {
             let _ = progress_tx.send(ProgressState::Idle);
             Err(e)
         }

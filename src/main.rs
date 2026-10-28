@@ -64,6 +64,10 @@ pub struct Args {
     #[arg(long)]
     text_mode: bool,
 
+    /// Do not tap the page or move the caret before typing (user focuses it)
+    #[arg(long)]
+    no_focus_tap: bool,
+
     /// Override the xochitl document store path
     #[arg(long)]
     notebook_dir: Option<String>,

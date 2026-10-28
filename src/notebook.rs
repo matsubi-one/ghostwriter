@@ -30,34 +30,66 @@ pub struct PageText {
 /// xochitl rewrites the page file while the page is still open, so the newest
 /// file is the page the user is working on.
 pub fn find_active_page(dir: &Path) -> Result<PathBuf> {
-    let mut best: Option<(SystemTime, PathBuf)> = None;
+    // Pick the notebook xochitl opened most recently, then the page it had
+    // open (lastOpenedPage). File mtime is only a fallback: other documents
+    // can be touched after the user's current page.
+    let mut newest: Option<(i64, PathBuf)> = None;
 
-    for entry in std::fs::read_dir(dir).with_context(|| format!("read_dir {}", dir.display()))? {
-        let entry = entry?;
-        let notebook_dir = entry.path();
-        if !notebook_dir.is_dir() {
-            continue;
-        }
-        let Ok(inner) = std::fs::read_dir(&notebook_dir) else {
-            continue;
-        };
-        for file in inner.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("rm") {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("metadata") {
                 continue;
             }
-            let Ok(meta) = file.metadata() else { continue };
-            let Ok(modified) = meta.modified() else { continue };
-            if best.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
-                best = Some((modified, path));
+            let Ok(raw) = std::fs::read_to_string(&path) else { continue };
+            let Ok(meta) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+            if meta["type"].as_str() != Some("DocumentType") {
+                continue;
+            }
+            let opened = meta["lastOpened"]
+                .as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            if newest.as_ref().map(|(t, _)| opened > *t).unwrap_or(true) {
+                newest = Some((opened, path));
             }
         }
     }
 
-    best.map(|(_, p)| p)
-        .context("no .rm page found in document store")
+    if let Some((_, meta_path)) = newest {
+        if let Some(uuid) = meta_path.file_stem().and_then(|s| s.to_str()) {
+            let raw = std::fs::read_to_string(&meta_path).unwrap_or_default();
+            let meta: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+            let page_idx = meta["lastOpenedPage"].as_i64().unwrap_or(-1);
+
+            let content_path = dir.join(format!("{}.content", uuid));
+            if let Ok(content_raw) = std::fs::read_to_string(&content_path) {
+                if let Ok(content) = serde_json::from_str::<serde_json::Value>(&content_raw) {
+                    if let Some(pages) = content["cPages"]["pages"].as_array() {
+                        if !pages.is_empty() {
+                            let idx = if page_idx >= 0 && (page_idx as usize) < pages.len() {
+                                page_idx as usize
+                            } else {
+                                pages.len() - 1
+                            };
+                            if let Some(page_id) = pages[idx]["id"].as_str() {
+                                let rm = dir.join(uuid).join(format!("{}.rm", page_id));
+                                if rm.exists() {
+                                    return Ok(rm);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    find_newest_page(dir)
 }
 
+/// Fallback: most recently modified .rm anywhere in the store.
+fn find_newest_page(dir: &Path) -> Result<PathBuf> {
 /// Parse a page file and return its typed text plus block geometry.
 pub fn read_page_text(path: &Path) -> Result<PageText> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;

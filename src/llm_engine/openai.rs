@@ -76,7 +76,7 @@ impl LLMEngine for OpenAI {
     }
 
     async fn execute(&mut self, cancellation: &GhostwriterCancellation, mut status_callback: Option<super::StatusCallback>) -> Result<()> {
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "messages": [{
                 "role": "user",
@@ -86,6 +86,13 @@ impl LLMEngine for OpenAI {
             "tool_choice": "required",
             "parallel_tool_calls": false
         });
+
+        // DeepSeek enables thinking mode by default, and thinking mode rejects
+        // tool_choice "required". Disable it for DeepSeek endpoints only so the
+        // forced tool call keeps working; other providers reject the field.
+        if self.base_url.contains("deepseek") {
+            body["thinking"] = json!({"type": "disabled"});
+        }
 
         debug!("Request: {}", body);
 

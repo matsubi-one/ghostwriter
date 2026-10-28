@@ -232,11 +232,13 @@ fn draw_svg(svg_data: &str, keyboard: &mut Keyboard, pen: &mut Pen, save_bitmap:
 /// Collapse blank lines so the answer does not leave empty paragraphs behind.
 fn normalize_answer(text: &str) -> String {
     text.lines()
-        .map(|line| line.trim_end())
-        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("
 ")
+        .trim()
+        .to_string()
 }
 
 fn determine_engine_name(engine_arg: &Option<String>, model: &str) -> Result<String> {
@@ -628,22 +630,14 @@ fn register_tools(
                 let result = if text_mode {
                     // New paragraph, same style as the question so the answer
                     // matches its text size, then the cleaned-up answer itself.
-                    let style = answer_style_clone.lock().ok().and_then(|s| s.clone());
+                    // No style shortcut: a new paragraph inherits the current
+                    // paragraph's style, so the answer matches the question.
+                    let question_style = answer_style_clone.lock().ok().and_then(|s| s.clone());
+                    log::debug!("text mode: typing answer, question style {:?}", question_style);
                     let normalized = normalize_answer(text);
-                    let mut r = kb.string_to_keypresses("
-");
-                    if r.is_ok() {
-                        r = match style.as_deref() {
-                            Some("HEADING") => kb.key_cmd_subheading(),
-                            Some("BULLET") | Some("BULLET2") => kb.key_cmd_bullet(),
-                            Some("BOLD") => kb.key_cmd_title(),
-                            _ => kb.key_cmd_body(),
-                        };
-                    }
-                    if r.is_ok() {
-                        r = kb.string_to_keypresses(&normalized);
-                    }
-                    r
+                    kb.string_to_keypresses("
+")
+                        .and_then(|_| kb.string_to_keypresses(&normalized))
                 } else {
                     draw_text(text, &mut kb)
                 };

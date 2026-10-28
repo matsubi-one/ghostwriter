@@ -462,14 +462,16 @@ async fn process_text_mode(
 
     // Put the caret inside the text block before the model answers.
     // Skipped in no-draw mode so read-only tests never touch the page.
-    if !config.no_draw && !config.no_focus_tap {
-        let (vx, vy) = crate::notebook::page_to_virtual(page.x, page.y, 1404.0, 1872.0);
-        {
+    if !config.no_draw {
+        if !config.no_focus_tap {
+            let (vx, vy) = crate::notebook::page_to_virtual(page.x, page.y, 1404.0, 1872.0);
             let mut t = touch.write().await;
             let _ = t.touch_start((vx + 4, vy + 4)).await;
             sleep(Duration::from_millis(120)).await;
             let _ = t.touch_stop().await;
         }
+        // Always jump to the end of the text block before typing: the caret may
+        // sit in the middle of the user's text, which splits words apart.
         if let Ok(mut kb) = keyboard.lock() {
             let _ = kb.ctrl_end();
         }

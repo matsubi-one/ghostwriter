@@ -228,6 +228,17 @@ fn draw_svg(svg_data: &str, keyboard: &mut Keyboard, pen: &mut Pen, save_bitmap:
     Ok(())
 }
 
+
+/// Collapse blank lines so the answer does not leave empty paragraphs behind.
+fn normalize_answer(text: &str) -> String {
+    text.lines()
+        .map(|line| line.trim_end())
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("
+")
+}
+
 fn determine_engine_name(engine_arg: &Option<String>, model: &str) -> Result<String> {
     if let Some(engine) = engine_arg {
         return Ok(engine.clone());
@@ -425,8 +436,11 @@ async fn run_ghostwriter_loop(
 
     let mut engine = create_engine(&engine_name, &engine_options)?;
 
+    // Paragraph style of the page currently being answered (set per request).
+    let answer_style: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
     // Register tools
-    register_tools(&mut engine, Arc::clone(&keyboard), Arc::clone(&pen), Arc::clone(&touch), &config)?;
+    register_tools(&mut engine, Arc::clone(&keyboard), Arc::clone(&pen), Arc::clone(&touch), &config, Arc::clone(&answer_style))?;
 
     let engine = Arc::new(TokioMutex::new(engine));
 
@@ -484,6 +498,7 @@ async fn run_ghostwriter_loop(
                     let cancellation_clone = Arc::clone(&cancellation);
                     let touch_clone = Arc::clone(&touch);
                     let keyboard_clone = Arc::clone(&keyboard);
+                    let answer_style_clone = Arc::clone(&answer_style);
                     tokio::spawn(async move {
                         coordinator::processing_task(
                             config_clone,
@@ -492,6 +507,7 @@ async fn run_ghostwriter_loop(
                             cancellation_clone,
                             touch_clone,
                             keyboard_clone,
+                            answer_style_clone,
                         ).await
                     })
                 };
@@ -579,6 +595,7 @@ fn register_tools(
     pen: Arc<Mutex<Pen>>,
     _touch: Arc<TokioRwLock<Touch>>,
     config: &Config,
+    answer_style: Arc<Mutex<Option<String>>>,
 ) -> Result<()> {
     use serde_json::Value as json;
 
@@ -587,6 +604,7 @@ fn register_tools(
     let no_draw = config.no_draw;
     let text_mode = config.text_mode;
     let keyboard_clone = Arc::clone(&keyboard);
+    let answer_style_clone = Arc::clone(&answer_style);
 
     let tool_config_draw_text = load_config("tool_draw_text.json");
     engine.register_tool(
@@ -608,9 +626,24 @@ fn register_tools(
             if !no_draw {
                 let mut kb = lock!(keyboard_clone);
                 let result = if text_mode {
-                    // Append on a fresh line in the existing text block.
-                    kb.string_to_keypresses("
-").and_then(|_| kb.string_to_keypresses(text))
+                    // New paragraph, same style as the question so the answer
+                    // matches its text size, then the cleaned-up answer itself.
+                    let style = answer_style_clone.lock().ok().and_then(|s| s.clone());
+                    let normalized = normalize_answer(text);
+                    let mut r = kb.string_to_keypresses("
+");
+                    if r.is_ok() {
+                        r = match style.as_deref() {
+                            Some("HEADING") => kb.key_cmd_subheading(),
+                            Some("BULLET") | Some("BULLET2") => kb.key_cmd_bullet(),
+                            Some("BOLD") => kb.key_cmd_title(),
+                            _ => kb.key_cmd_body(),
+                        };
+                    }
+                    if r.is_ok() {
+                        r = kb.string_to_keypresses(&normalized);
+                    }
+                    r
                 } else {
                     draw_text(text, &mut kb)
                 };

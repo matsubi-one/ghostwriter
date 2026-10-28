@@ -23,6 +23,8 @@ pub struct PageText {
     pub y: f64,
     pub width: f32,
     pub rm_path: PathBuf,
+    /// Paragraph style of the text block (HEADING, PLAIN, BULLET, ...)
+    pub style: Option<String>,
 }
 
 /// Return the most recently modified .rm file under the document store.
@@ -150,12 +152,19 @@ pub fn read_page_text(path: &Path) -> Result<PageText> {
         }
     }
 
+    let style = text_block
+        .styles
+        .iter()
+        .min_by_key(|(id, _)| (id.part1, id.part2))
+        .map(|(_, v)| format!("{:?}", v.value));
+
     Ok(PageText {
         text,
         x: text_block.x,
         y: text_block.y,
         width: text_block.width,
         rm_path: path.to_path_buf(),
+        style,
     })
 }
 

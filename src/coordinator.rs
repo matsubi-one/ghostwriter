@@ -283,12 +283,22 @@ pub async fn processing_task(
     cancellation: Arc<GhostwriterCancellation>,
     touch: Arc<tokio::sync::RwLock<Touch>>,
     keyboard: Arc<Mutex<Keyboard>>,
+    answer_style: Arc<Mutex<Option<String>>>,
 ) -> Result<()> {
     info!("Processing task: starting");
 
     if config.text_mode {
         info!("Processing task: text mode (no screenshot)");
-        return process_text_mode(config, engine, progress_tx, cancellation, touch, keyboard).await;
+        return process_text_mode(
+            config,
+            engine,
+            progress_tx,
+            cancellation,
+            touch,
+            keyboard,
+            answer_style,
+        )
+        .await;
     }
 
     // Update progress: taking screenshot
@@ -427,6 +437,7 @@ async fn process_text_mode(
     cancellation: Arc<GhostwriterCancellation>,
     touch: Arc<tokio::sync::RwLock<Touch>>,
     keyboard: Arc<Mutex<Keyboard>>,
+    answer_style: Arc<Mutex<Option<String>>>,
 ) -> Result<()> {
     let dir = config
         .notebook_dir
@@ -442,6 +453,12 @@ async fn process_text_mode(
         page.y,
         page.width
     );
+
+    // Remember the question's paragraph style so the answer can match it.
+    if let Ok(mut slot) = answer_style.lock() {
+        *slot = page.style.clone();
+    }
+    info!("text mode: paragraph style {:?}", page.style);
 
     // Put the caret inside the text block before the model answers.
     // Skipped in no-draw mode so read-only tests never touch the page.
